@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     
     # Inteligencia Artificial
     GEMINI_API_KEY: str | None = None
+
+    # CHAT ZHIPU
+    ZHIPU_API_KEY: str | None = None
     
     # Esta línea mágica le dice a Pydantic que lea automáticamente el archivo .env si existe
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")

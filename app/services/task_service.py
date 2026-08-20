@@ -1,7 +1,9 @@
 from sqlmodel import Session, select
-from app.models.task import Task, TaskCreate, TaskUpdate
+from app.models.task import Task, TaskCreate, TaskUpdate, PromptRequest, TaskSuggestResponse
 from app.core.config import settings
 from google import genai
+from openai import OpenAI
+import json
 
 # La Capa de Servicios se encarga EXCLUSIVAMENTE de la lógica.
 # Jamás sabe qué es una "Request" o "FastAPI". Separación absoluta.
@@ -66,3 +68,31 @@ def delete_task(session: Session, task_id: int) -> bool:
     session.delete(task_db)
     session.commit()
     return True
+
+def suggest_task_from_prompt(prompt_request: PromptRequest) -> TaskSuggestResponse:
+    if not settings.ZHIPU_API_KEY:
+        raise ValueError("ZHIPU_API_KEY no está configurada")
+        
+    client = OpenAI(
+        api_key=settings.ZHIPU_API_KEY,
+        base_url="https://api.z.ai/api/paas/v4/"
+    )
+    
+    system_prompt = """
+    Eres un asistente de productividad. El usuario te dará una frase en lenguaje natural sobre algo que tiene que hacer.
+    Tu trabajo es extraer un 'titulo' corto y conciso, y una 'descripcion' más detallada.
+    Debes responder EXCLUSIVAMENTE en formato JSON válido, sin Markdown, con esta estructura exacta:
+    {"title": "string", "description": "string"}
+    """
+    
+    response = client.chat.completions.create(
+        model="glm-4.7-flash",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt_request.prompt}
+        ],
+        temperature=0.3,
+    )
+    
+    ai_result = json.loads(response.choices[0].message.content)
+    return TaskSuggestResponse(**ai_result)
