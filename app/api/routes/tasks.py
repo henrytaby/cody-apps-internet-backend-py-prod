@@ -32,7 +32,13 @@ def suggest_task(session: SessionDep, current_user: CurrentUser, request: Prompt
     Recibe un texto en lenguaje natural y la IA extrae el Título y Descripción.
     Requiere que la variable ZHIPU_API_KEY esté configurada.
     """
-    return task_service.suggest_task_from_prompt(request)
+    try:
+        return task_service.suggest_task_from_prompt(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"El servicio de Inteligencia Artificial no está disponible en este momento. Detalle: {str(e)}"
+        )
 
 @router.patch("/{task_id}", response_model=TaskPublic)
 def actualizar_tarea(session: SessionDep, current_user: CurrentUser, task_id: int, task_in: TaskUpdate) -> Any:
