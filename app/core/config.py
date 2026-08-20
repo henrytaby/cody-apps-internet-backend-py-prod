@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     # Inteligencia Artificial
     GEMINI_API_KEY: str | None = None
 
-    # CHAT ZHIPU
-    ZHIPU_API_KEY: str | None = None
-
     # CHAT MISTRAL
     MISTRAL_API_KEY: str | None = None
     

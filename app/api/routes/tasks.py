@@ -30,10 +30,10 @@ def crear_tarea_con_ia(session: SessionDep, current_user: CurrentUser, task_in: 
 def suggest_task(session: SessionDep, current_user: CurrentUser, request: PromptRequest) -> Any:
     """
     Recibe un texto en lenguaje natural y la IA extrae el Título y Descripción.
-    Requiere que la variable ZHIPU_API_KEY esté configurada.
+    Requiere que la variable MISTRAL_API_KEY esté configurada.
     """
     try:
-        return task_service.suggest_task_from_prompt_v2(request)
+        return task_service.suggest_task_from_prompt(request)
     except Exception as e:
         raise HTTPException(
             status_code=503,
