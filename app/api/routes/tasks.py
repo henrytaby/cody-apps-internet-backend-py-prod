@@ -33,7 +33,7 @@ def suggest_task(session: SessionDep, current_user: CurrentUser, request: Prompt
     Requiere que la variable ZHIPU_API_KEY esté configurada.
     """
     try:
-        return task_service.suggest_task_from_prompt(request)
+        return task_service.suggest_task_from_prompt_v2(request)
     except Exception as e:
         raise HTTPException(
             status_code=503,

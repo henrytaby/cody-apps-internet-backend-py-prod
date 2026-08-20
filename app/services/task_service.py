@@ -4,6 +4,34 @@ from app.core.config import settings
 from google import genai
 from openai import OpenAI
 import json
+from functools import lru_cache
+
+@lru_cache(maxsize=1)
+def get_zhipu_client():
+    if settings.ZHIPU_API_KEY:
+        return OpenAI(
+            api_key=settings.ZHIPU_API_KEY,
+            base_url="https://api.z.ai/api/paas/v4/",
+            #base_url="https://open.bigmodel.cn/api/paas/v4/",
+            timeout=60.0  # Aumentado a 60 segundos
+        )
+    return None
+
+@lru_cache(maxsize=1)
+def get_genai_client():
+    if settings.GEMINI_API_KEY:
+        return genai.Client(api_key=settings.GEMINI_API_KEY)
+    return None
+
+@lru_cache(maxsize=1)
+def get_mistral_client():
+    if settings.MISTRAL_API_KEY:
+        return OpenAI(
+            api_key=settings.MISTRAL_API_KEY,
+            base_url="https://api.mistral.ai/v1",
+            timeout=60.0
+        )
+    return None
 
 # La Capa de Servicios se encarga EXCLUSIVAMENTE de la lógica.
 # Jamás sabe qué es una "Request" o "FastAPI". Separación absoluta.
@@ -26,9 +54,9 @@ def create_task_ai(session: Session, task_in: TaskCreate) -> Task:
     task_db = Task.model_validate(task_in)
     
     # --- 🤖 EFECTO WOW: SUGERENCIA DE INTELIGENCIA ARTIFICIAL ---
-    if settings.GEMINI_API_KEY:
+    client = get_genai_client()
+    if client:
         try:
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
             prompt = f"Eres un asistente proactivo de productividad. El usuario tiene esta tarea: '{task_db.title}'. Descripción: '{task_db.description or 'Sin descripción'}'. En un máximo de 2 oraciones cortas, dale un consejo útil, local o motivador para esta tarea."
             
             response = client.models.generate_content(
@@ -70,29 +98,109 @@ def delete_task(session: Session, task_id: int) -> bool:
     return True
 
 def suggest_task_from_prompt(prompt_request: PromptRequest) -> TaskSuggestResponse:
-    if not settings.ZHIPU_API_KEY:
+    client = get_zhipu_client()
+    if not client:
         raise ValueError("ZHIPU_API_KEY no está configurada")
         
-    client = OpenAI(
-        api_key=settings.ZHIPU_API_KEY,
-        base_url="https://api.z.ai/api/paas/v4/"
+    system_prompt = (
+        "Eres un asistente de productividad. El usuario te dará una frase en lenguaje natural sobre algo que tiene que hacer. "
+        "Tu trabajo es extraer un 'titulo' corto y conciso, y una 'descripcion' más detallada. "
+        "Debes responder EXCLUSIVAMENTE en formato JSON válido, sin Markdown, con esta estructura exacta: "
+        '{"title": "string", "description": "string"}'
     )
     
-    system_prompt = """
-    Eres un asistente de productividad. El usuario te dará una frase en lenguaje natural sobre algo que tiene que hacer.
-    Tu trabajo es extraer un 'titulo' corto y conciso, y una 'descripcion' más detallada.
-    Debes responder EXCLUSIVAMENTE en formato JSON válido, sin Markdown, con esta estructura exacta:
-    {"title": "string", "description": "string"}
-    """
+    # Reducir max_tokens para respuestas más rápidas
+    max_tokens = 100  # Reducido de 150 a 100
     
-    response = client.chat.completions.create(
-        model="glm-4.7-flash",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt_request.prompt}
-        ],
-        temperature=0.3,
+    try:
+        response = client.chat.completions.create(
+            model="glm-4.7-flash",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_request.prompt}
+            ],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+            timeout=45.0  # Timeout específico para esta llamada
+        )
+        
+        content = response.choices[0].message.content
+        
+        try:
+            ai_result = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1:
+                ai_result = json.loads(content[start:end + 1])
+            else:
+                # Si falla el JSON, devolver una respuesta básica
+                ai_result = {
+                    "title": prompt_request.prompt[:50] + "..." if len(prompt_request.prompt) > 50 else prompt_request.prompt,
+                    "description": "Tarea creada desde el prompt del usuario"
+                }
+
+        return TaskSuggestResponse(**ai_result)
+        
+    except Exception as e:
+        print(f"Error en suggest_task_from_prompt: {e}")
+        # En caso de error, devolver una respuesta básica en lugar de fallar
+        return TaskSuggestResponse(
+            title=prompt_request.prompt[:50] + "..." if len(prompt_request.prompt) > 50 else prompt_request.prompt,
+            description="Tarea creada desde el prompt del usuario"
+        )
+
+def suggest_task_from_prompt_v2(prompt_request: PromptRequest) -> TaskSuggestResponse:
+    client = get_mistral_client()
+    if not client:
+        raise ValueError("MISTRAL_API_KEY no está configurada")
+        
+    system_prompt = (
+        "Eres un asistente de productividad. El usuario te dará una frase en lenguaje natural sobre algo que tiene que hacer. "
+        "Tu trabajo es extraer un 'titulo' corto y conciso, y una 'descripcion' más detallada. "
+        "Debes responder EXCLUSIVAMENTE en formato JSON válido, sin Markdown, con esta estructura exacta: "
+        '{"title": "string", "description": "string"}'
     )
     
-    ai_result = json.loads(response.choices[0].message.content)
-    return TaskSuggestResponse(**ai_result)
+    # Reducir max_tokens para respuestas más rápidas
+    max_tokens = 100
+    
+    try:
+        response = client.chat.completions.create(
+            model="mistral-large-latest",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt_request.prompt}
+            ],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+            timeout=45.0  # Timeout específico para esta llamada
+        )
+        
+        content = response.choices[0].message.content
+        
+        try:
+            ai_result = json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1:
+                ai_result = json.loads(content[start:end + 1])
+            else:
+                # Si falla el JSON, devolver una respuesta básica
+                ai_result = {
+                    "title": prompt_request.prompt[:50] + "..." if len(prompt_request.prompt) > 50 else prompt_request.prompt,
+                    "description": "Tarea creada desde el prompt del usuario"
+                }
+
+        return TaskSuggestResponse(**ai_result)
+        
+    except Exception as e:
+        print(f"Error en suggest_task_from_prompt_v2: {e}")
+        # En caso de error, devolver una respuesta básica en lugar de fallar
+        return TaskSuggestResponse(
+            title=prompt_request.prompt[:50] + "..." if len(prompt_request.prompt) > 50 else prompt_request.prompt,
+            description="Tarea creada desde el prompt del usuario"
+        )
